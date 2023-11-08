@@ -1,4 +1,4 @@
-# The Adastral Sort-of-Technical Document (aka The Blue Book), v0.0.2 (2023-10-23)
+# The Adastral Sort-of-Technical Document (aka The Blue Book), v0.0.3 (2023-10-31)
 
 ## ISSUES WITH THIS DOCUMENT  
 
@@ -32,7 +32,7 @@ The top level is made up of a few components:
 Note that clientside also includes GS maintainers, as they'll use a CLI version of this. 
 This'll come up later (probably).
 
-*Currently as of v0.0.2, there is the most documentation for the clientside, for a number of reasons, mainly that there's nothing solid for the devside as of yet (though ideas have been floated, and will be in this document) and there's no specific server-side application - it's mainly just static hosting.*
+*Currently as of v0.0.3, there is the most documentation for the clientside, for a number of reasons, mainly that there's nothing solid for the devside as of yet (though ideas have been floated, and will be in this document) and there's no specific server-side application - it's mainly just static hosting.*
 
 ## The clientside, in detail
 
@@ -45,7 +45,7 @@ The layers are:
 - L2, The "glue" layer. This handles everything that isn't UI and versioning related. More specifically, this handles steam integration, sanity checks, finding installations, self-updating, importing custom SouthBank files (discussed later in the document), and importantly, downloading. These are handled in seperate subcomponents, so that different downloading backends can be easily swapped in. Current implementation is codenamed "Palace".
 - L1, versioning. This has one job - update a game. There can be multiple L1's, in the case that the SM devs prefers one method. Current implementation is based off of TF2CDownloader's implementation (kachemak), and is called Emley.
 
-*In our implementation, the L1 and L2 are merged into one project to ease contributing and building. This is called Winter.*
+*In our implementation, the L1 and L2 are merged into one project to ease contributing and building. This is called Winter, and it also contains other modules which are part of the L2 (it being a big component, it's necessary to modularise it).*
 
 ### The L3 
 
@@ -53,7 +53,7 @@ The L3 is primarily the GUI component. It avoids handling as much logic as possi
 However, one main feature is the ability to dynamically add/remove games based on what's on the server, instead of baking it in. This contains colours and images necessary to properly and cleanly display games on the UI, and this data is contained within the SB protocol.   
 
 #### Our implementation (And a defense of Godot)
-*as of v0.0.2, the L3 has zero logic hooking it into the L2. As this is implemented, more will be written here.*  
+*as of v0.0.3, the L3 has zero logic hooking it into the L2. As this is implemented, more will be written here.*  
 
 As stated before, we're using the Godot game engine for the L3, and this comes with several advantages:
 
@@ -63,7 +63,7 @@ As stated before, we're using the Godot game engine for the L3, and this comes w
 - Small size.
 
 The L2 and L3 communicate via the GDExtension interface. There's currently a "shim" which is a L2 sub-component which's main task is just to handle the Godot<->C++ interop.
-*This is called Coldfield and it's currently included in Winter.*
+*This is made up of two parts, one to handle the standard boilerplate and one as the actual class that'll be used in GDScript - theese are called coldfield and sutton respectively and they're currently included in Winter.*
 
 ### The L2
 
@@ -77,7 +77,7 @@ The L2 handles most tasks, and as such is modular within itself. These tasks inc
 It's sort of the brain of the whole client.
 #### Our implementation
 Notably our implementation it also includes the shim needed to communicate with the godot L3.  
-*As of v0.0.2, The main part of the L2, Palace, hasn't been written, besides some skeleton code.*
+*As of v0.0.3, The main part of the L2, Palace now has some code - it manages high level functions.*
 
 ### The L1
 
@@ -85,62 +85,55 @@ This handles versioning. In its most simplest form, it'd provide the list of ver
 It should do all the updating needed, but any network IO should call back to the L2 (mainly downloading files).  
 
 #### Our implementation
-*As of v0.0.2, this currently has the most work as Emley. You'll find this included in Winter.*  
   
-This is, as stated before, based off of the existing TF2CDownloader solution called kachemak. We've made / are planning to make alterations to it but it's best to explain how it works first.
-##### How Kachemak works
-It leverages the Butler utility for applying patches between versions and "healing" existing versions, and uses .tar.zstd archives when patching isn't faesible. The client looks for a "versions.json" file which contains all the necessary data needed to update the game. It uses aria2c for downloading. The general format is as such:
+This is, as stated before, based off of the existing TF2CDownloader solution called kachemak. We've altered this for efficiency.
+##### How (our altered) Kachemak works
+It leverages the Butler utility for applying patches between versions and "healing" existing versions, and uses .zip archives when patching isn't faesible. The client looks for a "bullseye.json" file which contains all the necessary data needed to update the game. It uses libtorrent for downloading. The general format is as such:
 ```  
 {
     "versions": {
         "0": {},
         "1": {"heal": "example.zip"}
-        "2": {"url": "example", "file": "example.tar.zstd", "heal":"example.zip", "presz": 100000000, "postsz": 1000050000, "signature": "example.sig"}
+        "2": {"url": "example.torrent", "file": "example.zip", "size": 10000, "signature": "example.sig"}
     }
     "patches": {
-        "1": {"url": "example", "file": "example.pwr", "tempsize": 100000000}
+        "1": {"url": "example", "file": "example.pwr", "tempsize": 1000}
     }
 }
 ```
-Note that all the fields specifing a file are relative to the location of the `versions.json` file.
+Note that all the fields specifing a file are relative to the location of the `bullseye.json` file.
 To explain the specific fields:
 
 - versions contains a key of every revision, even if no server-side data is available for it. The client uses this to check if a version is valid. Inside these keys are objects containing data specific to that revision.
-    - `url`: This contains a URL to any file that downloads the archive of the revision.
-    - `file`: the name of the archive of the revision. The seperation between this and `url` will be explained later.
-    - `heal`: A .zip archive of the revision, notably with no containing directory. Needed for butler verification.
-    - `signature`: The name of the signature file on the server.
-    - `presz` and ``postsz``: (ok I have no idea something to do with size)
+    - `url`: This contains a URL to a .torrent file which downloads the file in `file` (This torrent file *must* contain a webseed to the file on the server).
+    - `file`: The name of the archive of the revision in .zip format.
+    - `size`: The revision archive size in MBs.
+    - `signature`: The name of the signature file for the archive (generated by butler) on the server.
 - patches contains a key of every version a patch to the latest version is available for. Inside the keys are objects containing data specific to the patch.
-    - `url`: This contains a URL to any file that downloads the patch.
+    - `url`: This contains a URL to a .torrent file which downloads the patch (This torrent file *must* contain a webseed to the patch on the server).
     - `file`: Name of the patch.
-    - `tempsize`: the temporary space required to apply the patch.
+    - `tempsize`: the temporary space required to apply the patch in MB.
 
 This works as follows:
 
 1. If client has a version that matches a key in `versions`, then it will verify the instally by running `butler heal x` where x is the url specified in the heal field of the version. if that doesn't exist, do a full reinstall.
-2. If the client successfully heals, look in `patches` for the current version. If it's there, then download the file to some temp location using the `url` provided - this could be a link to effectively any file that ends up downlading the file in `file` using aria2.
+2. If the client successfully heals, look in `patches` for the current version. If it's there, then download the file to some temp location using the `url` provided - The webseed acts like a fallback in the case enough people haven't seeded it by downloading.
 3. Apply the patch using `butler apply`.
 4. Write the latest revision to the version file (see on disk format).
 
-##### Our planned changes  
-Kachemak has some shortcomings, namely:
+##### Our changes and remaining issues
+To allieviate issues in the original Kachemak spec, the following changes have been implemented:
 
-- There's functionally the same archive stored twice since butler can't support .tar.zstd archives
-- every time a new version is prepared, every patch needs to be updated, leading to very slow builds after a while
-- it uses metalinks and aria2c, which isn't ideal for reasons out-of-scope for this document
-- To get the latest version, you need the version numbers to be incremental (since it's obtained by doing a sort on the keys since dict key order isn't guaranteed, apparently), which is inconvenient if you use something that isn't easily an incremental number
+- Cut out the seperate .tar.zstd archive and just use the same heal .zip. This cuts storage space on the server and reduces client complexity.
+- Uses webseeds and libtorrent as opposed to metalinks and aria2c; this is a more supported and modern approach.
 
-*as of v0.0.2, the following changes haven't occured and aren't finalised.*  
+*The remaining issues as of v0.0.3 are:*
 
-To allieviate these issues, the following changes are to be made:
+- *To get the latest version, you need the version numbers to be incremental (since it's obtained by doing a sort on the keys since dict key order isn't guaranteed, apparently), which is inconvenient if you use something that isn't easily an incremental number*
 
-- Merge the heal and archives to reduce space taken
-- use torrent files with webseeds in place of metalinks, and use libtorrent to download the files
-- Figure out a way to more efficiently store patch files (i.e tiered patches)
-  
-*Some of these have already been implemented in ofinstaller-beans.*
+The following changes are to be made:
 
+- On the serverside when generating patches, implement a "cutoff size" which if a patch goes over this threshold, it will be considered "too old" and patches will cease being generated for it.
 
 
 ## Protocol(s)
@@ -155,61 +148,7 @@ The main file lies at the root of the server, and specifies:
 
 The specification for this file is known as southbank. Parsing for this is done on the L2 on the client, and generally it shouldn't be modified too much as it's not changed on a game update.
 
-The SouthBank specification *(as of v0.0.2)* is as following, specified using JSON Schema:
-```
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "no url yet lol",
-  "title": "southbank",
-  "description": "The Southbank protocol for Adastral",
-  "type": "object",
-  "properties": {
-	  "ver": {"type": "string"},
-	  "dl_url": {"type": "string"},
-	  "games": {
-		  "type": "array",
-		  "items": {
-			  "type": "object",
-			  "properties":{
-				  "name":{"type":"string"},
-				  "data_dir":{"type":"string"},
-				  "source":{"type":"string"},
-				  "versioning":{"type":"number"},
-				  "belmont":{
-					  "type":"object",
-					  "properties": {
-						  "icon":{"type":"string"},
-						  "star":{"type":"string"},
-						  "lightfg":{"type":"string"},
-						  "accent":{"type":"string"},
-						  "main":{"type":"string"},
-						  "light":{"type":"string"},
-						  "dark":{"type":"string"},
-						  "bg":{"type":"string"},
-						  "wordmark":{"type": "string"}
-						  },
-					  "required": ["icon","star","lightfg","accent","main","light","dark","bg"]
-				   },
-				  "steam_art":{
-					  "type":"object",
-					  "properties": {
-						  "icon":{"type":"string"},
-						  "logo":{"type":"string"},
-						  "hero":{"type":"string"},
-						  "grid":{"type":"string"}
-					   },
-					   "required": ["icon","logo","hero","grid"]
-				   }
-			  },
-			  "required": ["name","data_dir","source","versioning"]
-		  },
-		  "minItems": 1,
-		  "uniqueItems": true
-	  }
-	}
-}
-
-```
+The SouthBank specification *JSON Schema hasn't been updated yet, however a working example lives on [the testing server](https://adastral.net/a/southbank.json)*
 
 
 
@@ -239,6 +178,8 @@ This'll be in the CONTRIBUTING.md in the various repos as well, but this is a mo
 ## What's with the names?  
 The names for the codebases may seem somewhat random, but they follow this sort-of scheme:
 
-- Components of an application: Name of a television/radio transmitter, usually in the UK:  (Emley = Emley Moor, Belmont, Palace = Crystal/Alexandra Palace, Winter = Winter Hill, Coldfield = Sutton Coldfield)
-- Protocols/Specifications: Name of an old television program: (SouthBank = The South Bank Show)  
+- Components of an application: Name of a television/radio transmitter, usually in the UK:  (Emley = Emley Moor, Belmont, Palace = Crystal/Alexandra Palace, Winter = Winter Hill, Sutton and Coldfield = Sutton Coldfield)
+- Protocols/Specifications: Name of an old television program: (SouthBank = The South Bank Show, bullseye = Bullsreye)
 - Seperate applications: Rivers generally in the north of England: (Aire)
+
+A guide to what component does what is available in winter's CONTRIBUTING.md document.
